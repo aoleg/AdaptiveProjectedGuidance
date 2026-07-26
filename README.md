@@ -201,18 +201,6 @@ what produced a result.
 the first step of a run and warns if it was enabled but never modified a step — which
 normally means the CFG Scale is 1.0, or the guidance limiter excluded every step.
 
-## Tests
-
-The maths and the script plumbing are checked offline — no model, no GPU, a couple of
-seconds. `tests/test_core.py` diffs the guidance functions against verbatim transcriptions
-of the reference implementations; `tests/test_script.py` drives the Forge script under
-stubbed `modules`/`backend` to check the hook contract, the momentum lifecycle, the
-schedule and the XYZ overrides.
-
-```bash
-venv/Scripts/python.exe tests/test_core.py && venv/Scripts/python.exe tests/test_script.py
-```
-
 ## Credits
 
 A port to Forge Neo, merged from three upstream implementations:
