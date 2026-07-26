@@ -211,7 +211,15 @@ def test_other_methods():
     bias, _ = latents(seed=17)
 
     check("TraSCE anchors on the empty prediction", close(core.trasce_guidance(bias, cond, uncond, 7.0), bias + 7.0 * (cond - uncond)))
-    check("method two is softer than TraSCE", (core.method_two_guidance(bias, cond, uncond, 7.0) - cond).abs().mean() < (core.trasce_guidance(bias, cond, uncond, 7.0) - cond).abs().mean())
+    #   an empty negative prompt makes the anchor and the negative the same prediction,
+    #   which is exactly ordinary CFG — that is what "TraSCE needs a negative" means
+    check("TraSCE with an empty negative == plain CFG", close(core.trasce_guidance(bias, cond, bias, 7.0), bias + 7.0 * (cond - bias)))
+
+    #   method two is CFG at scale + 1, anchored halfway between the empty prediction and
+    #   the negative one — the two identities that say what it actually is
+    midpoint = (bias + uncond) / 2
+    check("method two anchors on the midpoint, at scale + 1", close(core.method_two_guidance(bias, cond, uncond, 7.0), midpoint + 8.0 * (cond - midpoint)))
+    check("method two with an empty negative == plain CFG at scale + 1", close(core.method_two_guidance(uncond, cond, uncond, 7.0), uncond + 8.0 * (cond - uncond)))
 
     starred = core.cfg_star_uncond(cond, uncond)
     residual = (cond - starred).flatten(1)

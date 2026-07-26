@@ -92,11 +92,18 @@ and uses the negative purely as a direction to walk away from.
 
 **What you'll see:** negative prompts that actually remove things. If you have been
 fighting a concept that refuses to leave — a watermark style, an artist's look, a body
-feature — this is the method to try. It does nothing at all with an empty negative prompt,
-by construction, and it costs one extra model evaluation per step (roughly 50% slower).
+feature — this is the method to try. With an *empty* negative prompt it reduces exactly to
+ordinary CFG, since the anchor and the negative become the same prediction — so it is only
+worth selecting when you actually have something in the negative. It costs one extra model
+evaluation per step (roughly 50% slower).
 
-**Method two** is a softer variant of the same idea, splitting the difference between the
-empty prediction and the negative one. Try it if TraSCE is too aggressive.
+**Method two** is a middle ground between TraSCE and ordinary CFG. Where TraSCE builds
+entirely from the empty-prompt prediction, Method two builds from the point halfway
+between the empty prediction and the negative one — and pushes one scale step harder
+(`midpoint + (CFG + 1) × (positive − midpoint)`). It keeps some of TraSCE's ability to
+erase while staying closer to the composition ordinary CFG would have produced. Unlike
+TraSCE it still does something with an empty negative prompt, where it reduces to plain
+CFG at scale + 1. It costs the same extra model evaluation per step.
 
 ### Normal
 
