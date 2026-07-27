@@ -128,7 +128,7 @@ class APGForNeo(scripts.Script):
                     norm_threshold = gr.Slider(minimum=0.0, maximum=20.0, step=0.01, value=8.0, label="rescale threshold", info="cap on the length of the guidance update; model-dependent, 0 = no cap")
                 with gr.Row():
                     momentum = gr.Slider(minimum=-1.5, maximum=1.0, step=0.01, value=-0.5, label="momentum", info="carry over the previous steps' guidance; negative (-0.75..-0.25) is the paper's recommendation")
-                    adaptive_momentum = gr.Slider(minimum=0.0, maximum=1.0, step=0.001, value=0.0, label="adaptive momentum", info="decay momentum to zero as sampling progresses; 0 = off, 0.18 is the ComfyUI node's default")
+                    adaptive_momentum = gr.Slider(minimum=0.0, maximum=1.0, step=0.001, value=0.18, label="adaptive momentum", info="decay momentum to zero as sampling progresses; 0 = off, 0.18 is the ComfyUI node's default")
 
             with gr.Group(visible=False) as g_fdg:
                 fdg_scale = gr.Textbox(
