@@ -238,5 +238,6 @@ Papers as linked per method above. MaHiRo is by yoinked-h, via ComfyUI.
 - **Prompt composition (`AND`) is honoured.** Taking over the CFG slot skips the line where
   Forge multiplies the scale by the summed conditioning strengths; the extension recovers
   that factor from a pre-CFG probe.
+- **Single-frame 5D latents are handled.** Forge Neo samples Anima, Krea 2 and Qwen on `(B, C, 1, H, W)`, where the per-sample sums would run per channel and FDG could not run at all. The frame axis is dropped for the guidance maths and restored afterwards, so every method behaves as it does on SD/SDXL. Real video (more than one frame) is left as it arrives; FDG falls back to plain CFG there and says so in the console.
 - **SLG (SD3)** was dropped: Forge Neo has no skip-layer support in its backend, so the
   option could never have done anything.

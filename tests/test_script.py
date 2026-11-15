@@ -554,6 +554,84 @@ def test_fp16_round_trip():
     check("and stays finite", bool(torch.isfinite(out).all()))
 
 
+def test_single_frame_latents():
+    print("5D latents — Wan-VAE image models sample on (B, C, 1, H, W)")
+
+    flat = dict(fade_enabled=True, low_cfg1=0.0, boost_step=0.0, high_step=0.0, max_scale=1.0, fade_step=1.0, zero_step=1.0, min_scale=1.0, high_cfg1=1.0)
+    cases = {
+        "APG defaults": dict(method=neo_apg.APG),
+        "APG, no cap": dict(method=neo_apg.APG, norm_threshold=0.0, momentum=0.0),
+        "APG, cap 15": dict(method=neo_apg.APG, norm_threshold=15.0, momentum=0.0),
+        "TraSCE": dict(method=neo_apg.TRASCE),
+        "Method two": dict(method=neo_apg.METHOD_TWO),
+        "Normal": dict(method=neo_apg.NORMAL),
+        "Normal + Reinhard": dict(method=neo_apg.NORMAL, reinhard=8.0, **flat),
+        "Normal + Rescale CFG": dict(method=neo_apg.NORMAL, rescale=0.7, **flat),
+        "Normal + heuristic": dict(method=neo_apg.NORMAL, heuristic=8.0, **flat),
+        "Normal + centre to mean": dict(method=neo_apg.NORMAL, centre_mean=True, **flat),
+        "APG + CFG *": dict(method=neo_apg.APG, cfg_star=True),
+        "APG + tangential damping": dict(method=neo_apg.APG, tangential_damp=True),
+    }
+    if neo_apg.FDG in neo_apg.METHODS:
+        cases["FDG"] = dict(method=neo_apg.FDG)
+
+    def build(overrides):
+        script, args = defaults()
+        args = set_arg(script, args, "enabled", True)
+        for name, value in overrides.items():
+            args = set_arg(script, args, name, value)
+        return patch(script, args)[1]
+
+    def steps(overrides, x, cond, uncond):
+        #   three steps, so the momentum buffer carries a tensor into the comparison
+        unet = build(overrides)
+        out = None
+        for sigma in (5.0, 3.0, 1.5):
+            out = run(unet, x, cond, uncond, sigma, cond_scale=4.0)
+        return out
+
+    g = torch.Generator().manual_seed(13)
+    x, cond, uncond = (torch.randn(1, 16, 32, 48, generator=g) for _ in range(3))
+
+    for name, overrides in cases.items():
+        LOGGER.messages.clear()
+        want = steps(overrides, x, cond, uncond)
+        got = steps(overrides, x.unsqueeze(2), cond.unsqueeze(2), uncond.unsqueeze(2))
+        same = got.shape == (1, 16, 1, 32, 48) and torch.allclose(got.squeeze(2), want, atol=1e-5)
+        check(f"{name}: (B, C, 1, H, W) == (B, C, H, W)", same, f"shape {tuple(got.shape)}")
+        check(f"{name}: no fallback warning", not any(level == "warning" for level, _ in LOGGER.messages))
+
+    #   the empty-prompt pass goes through the model, which wants the shape it samples on
+    seen = []
+    original = neo_apg.calc_cond_uncond_batch
+
+    def recording(model, cond_, uncond_, x_, timestep, options):
+        seen.append(tuple(x_.shape))
+        return original(model, cond_, uncond_, x_, timestep, options)
+
+    neo_apg.calc_cond_uncond_batch = recording
+    try:
+        steps(dict(method=neo_apg.TRASCE), x.unsqueeze(2), cond.unsqueeze(2), uncond.unsqueeze(2))
+    finally:
+        neo_apg.calc_cond_uncond_batch = original
+    check("TraSCE hands the model the 5D latent", bool(seen) and all(shape == (1, 16, 1, 32, 48) for shape in seen), str(seen[:1]))
+
+    #   real video keeps its frames; nothing here pretends to have a rule for T > 1
+    g = torch.Generator().manual_seed(14)
+    xv, cv, uv = (torch.randn(1, 16, 3, 32, 48, generator=g) for _ in range(3))
+    out = steps(dict(method=neo_apg.APG), xv, cv, uv)
+    check("video (T > 1): shape kept, finite", out.shape == xv.shape and bool(torch.isfinite(out).all()))
+
+    if neo_apg.FDG in neo_apg.METHODS:
+        LOGGER.messages.clear()
+        neo_apg.APGForNeo.warned_fdg_fallback = False
+        out = steps(dict(method=neo_apg.FDG), xv, cv, uv)
+        warnings = [m for level, m in LOGGER.messages if level == "warning" and "FDG" in m]
+        check("video FDG falls back to plain CFG", torch.allclose(out, uv + 4.0 * (cv - uv), atol=1e-4))
+        check("and says so once, not once per step", len(warnings) == 1, f"{len(warnings)} warnings")
+        neo_apg.APGForNeo.warned_fdg_fallback = False
+
+
 def test_never_ran_warning():
     print("diagnostics")
 
@@ -580,6 +658,7 @@ def main():
         test_post_cfg_and_hires,
         test_xyz_overrides,
         test_fp16_round_trip,
+        test_single_frame_latents,
         test_never_ran_warning,
     ):
         test()

@@ -103,6 +103,7 @@ class APGForNeo(scripts.Script):
     invocations: int = 0
     diagnosed: bool = False
     warned_foreign_cfg: bool = False
+    warned_fdg_fallback: bool = False
     active: bool = False
 
     def title(self):
@@ -352,6 +353,7 @@ class APGForNeo(scripts.Script):
         cls.invocations = 0
         cls.diagnosed = False
         cls.warned_foreign_cfg = False
+        cls.warned_fdg_fallback = False
 
         s = self._settings(p, args)
         cls.active = s["enabled"]
@@ -439,6 +441,7 @@ class APGForNeo(scripts.Script):
         cls.invocations = 0
         cls.diagnosed = False
         cls.warned_foreign_cfg = False
+        cls.warned_fdg_fallback = False
         cls.active = False
 
     #   ------------------------------------------------------------------ hooks
@@ -521,6 +524,18 @@ class APGForNeo(scripts.Script):
             c = cond.float()
             u = uncond.float()
 
+            #   Wan-VAE image models (Anima, Krea 2, Qwen) sample on (B, C, 1, H, W).  The
+            #   math in `core` reduces over the last three dims, which on that shape is
+            #   (T, H, W) — per channel instead of per sample — and kornia's pyramid
+            #   refuses 5D outright.  Drop the single-frame axis here and put it back on
+            #   the way out; real video (T > 1) is left as it arrives.
+            frame_axis = c.ndim == 5 and c.shape[2] == 1
+            if frame_axis:
+                xf, c, u = xf.squeeze(2), c.squeeze(2), u.squeeze(2)
+
+            def restore(t):
+                return t.unsqueeze(2) if frame_axis else t
+
             if s["centre_mean"]:
                 c = core.centre_to_mean(c)
                 u = core.centre_to_mean(u)
@@ -545,7 +560,7 @@ class APGForNeo(scripts.Script):
             if method == APG:
                 cls._prepare_momentum(state, s, model, sigma, sigma_f, c)
                 denoised = core.normalized_guidance(c, u, scale, state.buffer, s["eta"], s["norm_threshold"])
-                return (xf - denoised).to(cond.dtype)
+                return restore((xf - denoised).to(cond.dtype))
 
             if method == FDG:
                 scales = core.parse_fdg_scales(s["fdg_scale"], scale)
@@ -553,21 +568,27 @@ class APGForNeo(scripts.Script):
                     scales = [scale, scale]
                 try:
                     denoised = core.laplacian_guidance(c, u, scales)
-                except Exception:
+                except Exception as e:
                     logger.debug(traceback.format_exc())
+                    if not cls.warned_fdg_fallback:
+                        cls.warned_fdg_fallback = True
+                        logger.warning(f"APG: FDG cannot run on a {tuple(c.shape)} latent ({type(e).__name__}); using plain CFG instead")
                     denoised = u + scale * (c - u)
-                return (xf - denoised).to(cond.dtype)
+                return restore((xf - denoised).to(cond.dtype))
 
             if method in (TRASCE, METHOD_TWO):
                 if scale <= 1.0:
                     return x - cond
+                #   the model still needs the latent in the shape it samples on
                 bias, _ = calc_cond_uncond_batch(model, state.empty_cond, None, x, sigma, options)
                 bias = bias.float()
+                if frame_axis:
+                    bias = bias.squeeze(2)
                 if method == TRASCE:
                     denoised = core.trasce_guidance(bias, c, u, scale)
                 else:
                     denoised = core.method_two_guidance(bias, c, u, scale)
-                return (xf - denoised).to(cond.dtype)
+                return restore((xf - denoised).to(cond.dtype))
 
             #   NORMAL — plain CFG plus the three magnitude tweaks, computed in eps space
             #   (`x - prediction`) because that is the space Rescale CFG's std comparison
@@ -593,7 +614,7 @@ class APGForNeo(scripts.Script):
             if s["rescale"] > 0.0:
                 denoised = core.rescale_cfg(denoised, c_eps, s["rescale"])
 
-            return denoised.to(cond.dtype)
+            return restore(denoised.to(cond.dtype))
 
         return apg_cfg_function
 
